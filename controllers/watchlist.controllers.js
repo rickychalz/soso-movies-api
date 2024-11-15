@@ -1,5 +1,5 @@
 import asyncHandler from "express-async-handler";
-import { Watchlist } from "../models/watchlist.models.js";
+import { Watchlist } from "../models/watchlist.model.js";
 
 
 const addToWatchlist = asyncHandler(async (req, res) => {
