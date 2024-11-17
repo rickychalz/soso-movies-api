@@ -4,16 +4,27 @@ import { User } from "../models/user.models.js";
 
 // token for authenticated user
 const generateAccessToken = (id) => {
+  if (!id) throw new Error("User ID is required to generate access token");
   return jwt.sign({ id }, process.env.ACCESS_TOKEN_SECRET, {
     expiresIn: process.env.ACCESS_TOKEN_EXPIRY,
   });
 };
 
 const generateRefreshToken = (id) => {
+  if (!id) throw new Error("User ID is required to generate refresh token");
   return jwt.sign({ id }, process.env.REFRESH_TOKEN_SECRET, {
     expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
   });
 };
+
+
+const generateVerifyToken = (id) => {
+  if (!id) throw new Error("User ID is required to generate verification token");
+  return jwt.sign({ id }, process.env.VERIFY_TOKEN_SECRET, {
+    expiresIn: process.env.VERIFY_TOKEN_EXPIRY,
+  });
+};
+
 
 const verifyRefreshToken = (token) => {
   try {
@@ -24,39 +35,42 @@ const verifyRefreshToken = (token) => {
   }
 };
 
-// New middleware: verifyToken
+// New middleware: verify access Token
 const verifyToken = asyncHandler(async (req, res, next) => {
   let token;
 
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer ')
-  ) {
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
     try {
       // Get token from header
       token = req.headers.authorization.split(' ')[1];
 
-      // Verify access token
-      const userId = verifyAccessToken(token);
-      req.user = await User.findById(userId).select('-password');
+      // Verify the access token
+      const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+
+      // Attach user to the request object (excluding the password)
+      req.user = await User.findById(decoded.id).select('-password');
+      
       next();
     } catch (error) {
       console.error(error);
 
-      // If access token is expired, try to use refresh token
+      // Handle expired token case
       if (error.name === 'JsonWebTokenError') {
         res.status(403);
         throw new Error('Invalid token');
       } else if (error.name === 'TokenExpiredError') {
         try {
-          // Use refresh token to get new access token
-          const newAccessToken = await refreshToken(req, res);
+          // Use refresh token to get a new access token (this will need to be implemented)
+          const newAccessToken = await refreshToken(req, res); // Implement this function to get new access token
           req.headers.authorization = `Bearer ${newAccessToken}`;
           next();
         } catch (refreshError) {
           res.status(403);
           throw new Error('Failed to refresh token');
         }
+      } else {
+        res.status(500);
+        throw new Error('Error verifying token');
       }
     }
   }
@@ -101,4 +115,4 @@ const protectRoute = asyncHandler(async (req, res, next) => {
   }
 });
 
-export { generateAccessToken, protectRoute, generateRefreshToken, verifyRefreshToken, verifyToken };
+export { generateAccessToken, protectRoute, generateRefreshToken, generateVerifyToken, verifyRefreshToken, verifyToken };

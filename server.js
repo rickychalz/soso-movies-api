@@ -4,7 +4,6 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import userRouter from "./routes/user.routes.js";
-import mediaRouter from "./routes/movie.routes.js";
 import { errorHandler } from "./middlewares/error.middlewares.js";
 
 dotenv.config();
@@ -27,7 +26,7 @@ app.get('/test', (req, res) => {
 
 //routes
 app.use("/api/users", userRouter);
-app.use("/api/media", mediaRouter);
+
 
 //error handling middleware
 app.use(errorHandler);

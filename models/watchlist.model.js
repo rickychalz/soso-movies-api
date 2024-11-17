@@ -1,25 +1,33 @@
-import mongoose, {Schema} from 'mongoose'
+import mongoose, { Schema } from "mongoose";
 
-
-const watchlistSchema = new Schema({
-    userId: {
+const watchlistSchema = new Schema(
+  {
+    user: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
+      ref: "User",
+      required: true,
     },
-    movieId: {
+    mediaId: {  // This will be the movie or TV show ID
       type: String,
-      required: true
+      required: true,
     },
-    status: {
+    mediaTitle: {  // The title of the movie or TV show
       type: String,
-      enum: ['plan_to_watch', 'watching', 'completed'],
-      default: 'plan_to_watch'
+      required: true,
     },
-    addedAt: {
-      type: Date,
-      default: Date.now
+    posterPath: {  // The poster image URL
+      type: String,
+      required: true,
+    },
+    mediaType: {  // 'movie' or 'tv' to differentiate between movie and TV show
+      type: String,
+      enum: ['movie', 'tv'],
+      required: true,
     }
-  });
+  },
+  {
+    timestamps: true,
+  }
+);
 
 export const Watchlist = mongoose.model("Watchlist", watchlistSchema);

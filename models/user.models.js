@@ -50,6 +50,7 @@ const userSchema = new Schema(
     },
     refreshToken: String,
     accessToken: String,
+    verificationToken: String, 
   },
   {
     timestamps: true,

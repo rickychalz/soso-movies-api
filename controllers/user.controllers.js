@@ -2,14 +2,21 @@ import asyncHandler from "express-async-handler";
 import { User } from "../models/user.models.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import bcrypt from "bcryptjs";
-import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from "../middlewares/auth.middlewares.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  generateVerifyToken,
+  verifyRefreshToken,
+} from "../middlewares/auth.middlewares.js";
+import transporter from "../controllers/nodemailer.js";
+import jwt from 'jsonwebtoken';
 
 //registering user
 const registerUser = asyncHandler(async (req, res) => {
   const { username, email, password, avatar } = req.body;
 
   try {
-    // Fix: Logic error in validation
+    // Validation checks
     if (!username?.trim() || !email?.trim() || !password?.trim()) {
       res.status(400);
       throw new Error("Username, Email, Password are required");
@@ -22,44 +29,120 @@ const registerUser = asyncHandler(async (req, res) => {
       throw new Error("User already exists");
     }
 
-    //hash password
+    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
+    
+
+    // Create user with verification token
     const user = await User.create({
       username,
       email,
       password: hashedPassword,
       avatar,
+      isEmailVerified: false
     });
 
     if (user) {
-      // Generate access token
+      // Generate tokens
       const accessToken = generateAccessToken(user._id);
       const refreshToken = generateRefreshToken(user._id);
+      // Generate verification token 
+    const verificationToken = generateVerifyToken(user._id);
+    console.log('Generated verification token:', verificationToken);
 
-      // Update user with access token
+
+      // Update user tokens
       user.accessToken = accessToken;
       user.refreshToken = refreshToken;
+      user.verificationToken = verificationToken;
       await user.save();
 
-      return res.status(201).json({
+      // Generate verification URL
+      const verificationUrl = `${process.env.BASE_URL}/api/users/verify-email?token=${verificationToken}`;
+      console.log('Verification URL:', verificationUrl);
+
+      // Send verification email
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: "Please Verify Your Email",
+        text: `Click this link to verify your email: ${verificationUrl}`,
+        html: `
+          <h1>Email Verification</h1>
+          <p>Please click the link below to verify your email address:</p>
+          <a href="${verificationUrl}">Verify Email</a>
+          <p>This link will expire in ${process.env.VERIFY_TOKEN_EXPIRY || '1 hour'}.</p>
+        `
+      };
+
+      await transporter.sendMail(mailOptions);
+      console.log('Verification email sent successfully');
+
+      res.status(201).json({
         success: true,
-        _id: user._id,
+        id: user._id,
         username: user.username,
         email: user.email,
         avatar: user.avatar,
         accessToken,
+        message: "Registration successful. Please check your email to verify your account."
       });
     } else {
       res.status(400);
       throw new Error("Invalid user data");
     }
   } catch (error) {
+    console.error('Registration error:', error);
     res.status(400).json({ message: error.message });
   }
 });
+
+
+//verify email
+const verifyEmail = asyncHandler(async (req, res) => {
+  const token = req.query.token;
+  console.log('Received verification token:', token);
+
+  if (!token) {
+    res.status(400);
+    throw new Error("Token is missing");
+  }
+
+  try {
+    console.log('VERIFY_TOKEN_SECRET:', process.env.VERIFY_TOKEN_SECRET);
+    const decoded = jwt.verify(token, process.env.VERIFY_TOKEN_SECRET);
+    console.log('Decoded token:', decoded);
+
+    const user = await User.findOne({ 
+      _id: decoded.id, 
+      verificationToken: token 
+    });
+    console.log('Found user:', user);
+
+    if (!user) {
+      res.status(400);
+      throw new Error("Invalid or expired token.");
+    }
+
+    user.isEmailVerified = true;
+    user.verificationToken = undefined;
+    await user.save();
+    console.log('User verified successfully');
+
+    res.status(200).json({
+      success: true,
+      message: "Email successfully verified! You can now log in."
+    });
+
+  } catch (error) {
+    console.error('Verification error:', error);
+    res.status(400);
+    throw new Error("Invalid or expired token.");
+  }
+});
+
 
 //login user
 const loginUser = asyncHandler(async (req, res) => {
@@ -120,7 +203,7 @@ const logoutUser = asyncHandler(async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User not found',
+        message: "User not found",
       });
     }
 
@@ -131,12 +214,12 @@ const logoutUser = asyncHandler(async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Logged out successfully',
+      message: "Logged out successfully",
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: 'Error logging out',
+      message: "Error logging out",
       error: error.message,
     });
   }
@@ -144,35 +227,59 @@ const logoutUser = asyncHandler(async (req, res) => {
 
 //update user profile
 const updateUserProfile = asyncHandler(async (req, res) => {
-  const { username, email, avatar } = req.body;
-
+  const { username, email } = req.body;
+  
   try {
     const user = await User.findById(req.user._id);
-
-    if (user) {
-      user.username = username || user.username;
-      user.email = email || user.email;
-      user.avatar = avatar || user.avatar;
-
-      // Save the updated user information
-      await user.save();
-
-      // Send the updated user data and token to the client
-      return res.status(200).json({
-        success: true,
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        avatar: user.avatar,
-        token: generateAccessToken(user._id),
-      });
-    } else {
-      throw new Error("Failed to update information");
+    
+    if (!user) {
+      throw new Error("User not found");
     }
+
+    // Update basic information
+    if (username) user.username = username;
+    if (email) user.email = email;
+
+    // Handle avatar update if there's a new file
+    if (req.file) {
+      // Delete old avatar if it exists
+      if (user.avatar) {
+        const oldAvatarPath = path.join(__dirname, '..', user.avatar);
+        try {
+          await fs.access(oldAvatarPath);
+          await fs.unlink(oldAvatarPath);
+        } catch (error) {
+          console.log('No old avatar file to delete');
+        }
+      }
+
+      // Update avatar path in database
+      // Store relative path from uploads directory
+      user.avatar = req.file.path.replace('uploads/', '');
+    }
+
+    // Save the updated user information
+    await user.save();
+
+    // Send the updated user data and token
+    return res.status(200).json({
+      success: true,
+      id: user._id,
+      username: user.username,
+      email: user.email,
+      avatar: user.avatar,
+      token: generateAccessToken(user._id),
+    });
+
   } catch (error) {
+    // Delete uploaded file if there was an error
+    if (req.file) {
+      await fs.unlink(req.file.path).catch(console.error);
+    }
     res.status(400).json({ message: error.message });
   }
 });
+
 
 //delete user
 const deleteUser = asyncHandler(async (req, res) => {
@@ -224,7 +331,7 @@ const refreshToken = asyncHandler(async (req, res) => {
     const user = await User.findById(userId);
     if (!user || user.refreshToken !== token) {
       res.status(401);
-      throw new Error('Invalid refresh token');
+      throw new Error("Invalid refresh token");
     }
 
     // Generate a new access token
@@ -240,8 +347,6 @@ const refreshToken = asyncHandler(async (req, res) => {
   }
 });
 
-
-
 export {
   registerUser,
   loginUser,
@@ -249,5 +354,6 @@ export {
   deleteUser,
   changePassword,
   refreshToken,
-  logoutUser
+  verifyEmail,
+  logoutUser,
 };
