@@ -1,231 +1,162 @@
 import asyncHandler from "express-async-handler";
-import { ViewHistory } from "../models/viewHistory.model.js";
+import {ViewHistory} from "../models/viewHistory.model.js"
 
 const updateViewHistory = asyncHandler(async (req, res) => {
-  const { userId, tvShowsViewed, moviesViewed } = req.body;
+  const { id, title, type } = req.body;
+  const userId = req.user._id;
+
+  if (!id || !title || !type || !userId) {
+    return res.status(400).json({ 
+      message: "Missing required fields: id, title, type, or userId" 
+    });
+  }
 
   try {
+    // Get today's date at midnight for consistent daily records
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set the date to midnight today
+    today.setHours(0, 0, 0, 0);
 
-    // Check if the user activity for today already exists
+    // Find or create today's record
     let viewHistory = await ViewHistory.findOne({
       userId,
-      date: { $gte: today, $lt: new Date(today).setDate(today.getDate() + 1) }, // activity within today
+      date: today
     });
 
-    if (viewHistory) {
-      // If activity exists, update the view counts
-      viewHistory.tvShowsViewed += tvShowsViewed;
-      viewHistory.moviesViewed += moviesViewed;
-    } else {
-      // If no activity for today, create a new entry
+    // If no record exists for today, create a new one
+    if (!viewHistory) {
       viewHistory = new ViewHistory({
         userId,
-        tvShowsViewed,
-        moviesViewed,
         date: today,
+        tvShowsViewed: 0,
+        moviesViewed: 0,
+        totalViewed: 0,
+        viewedMediaIds: []
       });
     }
 
-    await viewHistory.save();
+    // Check if this media has already been viewed today
+    const alreadyViewed = viewHistory.viewedMediaIds.some(
+      item => item.mediaId === id && item.mediaType === type
+    );
 
-    // Return success response
-    res.status(200).json({ message: "Activity updated successfully" });
+    // Only increment if it hasn't been viewed today
+    if (!alreadyViewed) {
+      // Add to viewed media list
+      viewHistory.viewedMediaIds.push({
+        mediaId: id,
+        mediaType: type
+      });
+
+      // Increment appropriate counter
+      if (type === 'tv') {
+        viewHistory.tvShowsViewed += 1;
+      } else if (type === 'movie') {
+        viewHistory.moviesViewed += 1;
+      }
+
+      // Update total
+      viewHistory.totalViewed = viewHistory.tvShowsViewed + viewHistory.moviesViewed;
+
+      // Save changes
+      await viewHistory.save();
+
+      return res.status(200).json({
+        message: "View tracked successfully",
+        viewHistory: {
+          tvShowsViewed: viewHistory.tvShowsViewed,
+          moviesViewed: viewHistory.moviesViewed,
+          totalViewed: viewHistory.totalViewed
+        }
+      });
+    } else {
+      // If already viewed, just return current counts
+      return res.status(200).json({
+        message: "Media already viewed today",
+        viewHistory: {
+          tvShowsViewed: viewHistory.tvShowsViewed,
+          moviesViewed: viewHistory.moviesViewed,
+          totalViewed: viewHistory.totalViewed
+        }
+      });
+    }
+
   } catch (error) {
-    res.status(500).json({ message: "Error updating activity", error });
+    console.error("Error tracking view:", error);
+    return res.status(500).json({ message: "Failed to track view" });
   }
 });
 
-const getWeeklyViewHistory = asyncHandler(async (req, res) => {
-  const { userId } = req.params; // Assuming userId is passed as a parameter
+// Get view history for charts
+const getViewHistory = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const days = parseInt(req.query.days).toString() || 7; // Default to 7 days
 
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Reset to midnight today
+    const endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
+    
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - days + 1);
+    startDate.setHours(0, 0, 0, 0);
 
-    // Calculate the date 7 days ago
-    const sevenDaysAgo = new Date(today);
-    sevenDaysAgo.setDate(today.getDate() - 7); // Set the date to 7 days ago
-
-    // Query the database for the last 7 days of activity
     const viewHistory = await ViewHistory.find({
       userId,
-      date: { $gte: sevenDaysAgo, $lt: today },
-    }).sort({ date: 1 }); // Sort by date ascending
-
-    // Group the data by day (daily totals of tvShowsViewed and moviesViewed)
-    const dailyData = {};
-
-    viewHistory.forEach((history) => {
-      const dateKey = history.date.toISOString().split("T")[0]; // Format date as 'YYYY-MM-DD'
-      if (!dailyData[dateKey]) {
-        dailyData[dateKey] = { tvShowsViewed: 0, moviesViewed: 0 };
+      date: {
+        $gte: startDate,
+        $lte: endDate
       }
-      dailyData[dateKey].tvShowsViewed += history.tvShowsViewed;
-      dailyData[dateKey].moviesViewed += history.moviesViewed;
+    }).sort({ date: 1 });
+
+    // Format data for charts
+    const chartData = viewHistory.map(record => ({
+      date: record.date.toISOString().split('T')[0],
+      tvShows: record.tvShowsViewed,
+      movies: record.moviesViewed,
+      total: record.totalViewed
+    }));
+
+    return res.status(200).json(chartData);
+  } catch (error) {
+    console.error("Error fetching view history:", error);
+    return res.status(500).json({ message: "Failed to fetch view history" });
+  }
+});
+
+// Get today's viewing statistics
+const getTodayStats = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+
+  try {
+    // Get today's date at midnight
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Find today's record
+    const todayStats = await ViewHistory.findOne({
+      userId,
+      date: today
     });
 
-    // Prepare data for the frontend (graph)
-    const graphData = {
-      labels: [],
-      tvShowsViewedData: [],
-      moviesViewedData: [],
-    };
-
-    // Prepare the last 7 days, including days with no activity
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      const dateStr = date.toISOString().split("T")[0]; // Format date as 'YYYY-MM-DD'
-
-      graphData.labels.push(dateStr);
-      const dayData = dailyData[dateStr] || {
+    // If no record exists for today, return zeros
+    if (!todayStats) {
+      return res.status(200).json({
         tvShowsViewed: 0,
         moviesViewed: 0,
-      };
-
-      graphData.tvShowsViewedData.push(dayData.tvShowsViewed);
-      graphData.moviesViewedData.push(dayData.moviesViewed);
+        totalViewed: 0
+      });
     }
 
-    // Return the formatted data as a JSON response
-    res.status(200).json(graphData);
-  } catch (error) {
-    res.status(500).json({ message: "Error retrieving view history", error });
-  }
-});
-
-const getTotalViewCount = asyncHandler(async (req, res) => {
-  const { userId } = req.params; // Assuming userId is passed as a parameter
-
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set to midnight today (00:00:00)
-
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1); // Set to the start of tomorrow (00:00:00)
-
-    // Convert to UTC to avoid timezone issues
-    const todayUTC = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
-    const tomorrowUTC = new Date(Date.UTC(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate()));
-
-    // Query the database for today's view history
-    const viewHistory = await ViewHistory.aggregate([
-      { 
-        $match: {
-          userId,
-          date: { $gte: todayUTC, $lt: tomorrowUTC } // Activity within today
-        }
-      },
-      { 
-        $group: { 
-          _id: null, 
-          totalTvShowsViewed: { $sum: "$tvShowsViewed" },
-          totalMoviesViewed: { $sum: "$moviesViewed" }
-        }
-      }
-    ]);
-
-    if (viewHistory.length === 0) {
-      return res.status(404).json({ message: "No activity found for today." });
-    }
-
-    const { totalTvShowsViewed, totalMoviesViewed } = viewHistory[0];
-
-    // Return the total count as a response
-    res.status(200).json({
-      totalViews: totalTvShowsViewed + totalMoviesViewed,
-      tvShowsViewed: totalTvShowsViewed,
-      moviesViewed: totalMoviesViewed,
+    // Return today's stats
+    return res.status(200).json({
+      tvShowsViewed: todayStats.tvShowsViewed,
+      moviesViewed: todayStats.moviesViewed,
+      totalViewed: todayStats.totalViewed
     });
+
   } catch (error) {
-    res.status(500).json({ message: "Error retrieving total view count", error });
+    console.error("Error fetching today's stats:", error);
+    return res.status(500).json({ message: "Failed to fetch today's viewing statistics" });
   }
 });
 
-const getTvShowViewCount = asyncHandler(async (req, res) => {
-  const { userId } = req.params; // Assuming userId is passed as a parameter
-
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set to midnight today
-
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1); // Set to the start of tomorrow
-
-    // Query the database for today's TV show views
-    const viewHistory = await ViewHistory.aggregate([
-      { 
-        $match: {
-          userId,
-          date: { $gte: today, $lt: tomorrow } // Activity within today
-        }
-      },
-      { 
-        $group: { 
-          _id: null, 
-          totalTvShowsViewed: { $sum: "$tvShowsViewed" }
-        }
-      }
-    ]);
-
-    if (viewHistory.length === 0) {
-      return res.status(404).json({ message: "No TV show activity found for today." });
-    }
-
-    const { totalTvShowsViewed } = viewHistory[0];
-
-    // Return the total TV show views as a response
-    res.status(200).json({
-      tvShowsViewed: totalTvShowsViewed,
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Error retrieving TV show view count", error });
-  }
-});
-
-const getMovieViewCount = asyncHandler(async (req, res) => {
-  const { userId } = req.params; // Assuming userId is passed as a parameter
-
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set to midnight today
-
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1); // Set to the start of tomorrow
-
-    // Query the database for today's movie views
-    const viewHistory = await ViewHistory.aggregate([
-      { 
-        $match: {
-          userId,
-          date: { $gte: today, $lt: tomorrow } // Activity within today
-        }
-      },
-      { 
-        $group: { 
-          _id: null, 
-          totalMoviesViewed: { $sum: "$moviesViewed" }
-        }
-      }
-    ]);
-
-    if (viewHistory.length === 0) {
-      return res.status(404).json({ message: "No movie activity found for today." });
-    }
-
-    const { totalMoviesViewed } = viewHistory[0];
-
-    // Return the total movie views as a response
-    res.status(200).json({
-      moviesViewed: totalMoviesViewed,
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Error retrieving movie view count", error });
-  }
-});
-
-export { updateViewHistory, getWeeklyViewHistory, getTotalViewCount, getTvShowViewCount, getMovieViewCount };
-
-
+export { updateViewHistory, getViewHistory, getTodayStats };

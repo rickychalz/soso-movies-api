@@ -58,4 +58,5 @@ const processImage = async (req, res, next) => {
 };
 
 
-export {upload, processImage }
+const multerConfig = { upload, processImage };
+export default multerConfig;

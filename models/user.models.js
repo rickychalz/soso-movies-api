@@ -20,7 +20,7 @@ const userSchema = new Schema(
     },
     password: {
       type: String,
-      required: [true, "Please add a password"],
+      required: function() { return !this.socialLogin; },
       minlength: [6, "Password must be atleast 6 characters"]
     },
     avatar: {

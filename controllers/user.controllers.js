@@ -10,6 +10,13 @@ import {
 } from "../middlewares/auth.middlewares.js";
 import transporter from "../controllers/nodemailer.js";
 import jwt from 'jsonwebtoken';
+import * as fs from 'fs/promises';
+import path from "path";
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { OAuth2Client } from 'google-auth-library';
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID); // Your Google Client ID
 
 //registering user
 const registerUser = asyncHandler(async (req, res) => {
@@ -99,7 +106,6 @@ const registerUser = asyncHandler(async (req, res) => {
   }
 });
 
-
 //verify email
 const verifyEmail = asyncHandler(async (req, res) => {
   const token = req.query.token;
@@ -142,7 +148,6 @@ const verifyEmail = asyncHandler(async (req, res) => {
     throw new Error("Invalid or expired token.");
   }
 });
-
 
 //login user
 const loginUser = asyncHandler(async (req, res) => {
@@ -226,6 +231,9 @@ const logoutUser = asyncHandler(async (req, res) => {
 });
 
 //update user profile
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const updateUserProfile = asyncHandler(async (req, res) => {
   const { username, email } = req.body;
   
@@ -244,7 +252,7 @@ const updateUserProfile = asyncHandler(async (req, res) => {
     if (req.file) {
       // Delete old avatar if it exists
       if (user.avatar) {
-        const oldAvatarPath = path.join(__dirname, '..', user.avatar);
+        const oldAvatarPath = join(__dirname, '..', user.avatar); // Updated to use join
         try {
           await fs.access(oldAvatarPath);
           await fs.unlink(oldAvatarPath);
@@ -255,7 +263,7 @@ const updateUserProfile = asyncHandler(async (req, res) => {
 
       // Update avatar path in database
       // Store relative path from uploads directory
-      user.avatar = req.file.path.replace('uploads/', '');
+      user.avatar = req.file.path.replace('public/temp/', '');
     }
 
     // Save the updated user information
@@ -280,7 +288,6 @@ const updateUserProfile = asyncHandler(async (req, res) => {
   }
 });
 
-
 //delete user
 const deleteUser = asyncHandler(async (req, res) => {
   try {
@@ -303,13 +310,17 @@ const changePassword = asyncHandler(async (req, res) => {
   const { oldPassword, newPassword } = req.body;
 
   try {
-    user = User.findById(req.user._id);
+    // Find the user by ID using req.user._id
+    const user = await User.findById(req.user._id);
 
     if (user && (await bcrypt.compare(oldPassword, user.password))) {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+      // Update the user's password
       user.password = hashedPassword;
       await user.save();
+
       res.status(200).json({ message: "Password changed successfully!" });
     } else {
       res.status(401);
@@ -320,6 +331,7 @@ const changePassword = asyncHandler(async (req, res) => {
   }
 });
 
+//refresh token
 const refreshToken = asyncHandler(async (req, res) => {
   const { token } = req.body;
 
@@ -347,6 +359,73 @@ const refreshToken = asyncHandler(async (req, res) => {
   }
 });
 
+const googleLogin = asyncHandler(async (req, res) => {
+  const { email, name, avatar, googleId } = req.body;  // Assume these are passed from the frontend
+
+  try {
+    // Check if the user already exists in the database
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // If user exists, update their Google login info (e.g., avatar, social login info)
+      user.socialLogin = { provider: "google", providerId: googleId };
+      user.avatar = avatar;  // Update avatar if provided
+
+      // Generate new tokens
+      const accessToken = generateAccessToken(user._id);
+      const refreshToken = generateRefreshToken(user._id);
+
+      // Save the updated user
+      user.accessToken = accessToken;
+      user.refreshToken = refreshToken;
+      await user.save();
+
+      // Respond with user info and tokens
+      return res.status(200).json({
+        success: true,
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        avatar: user.avatar,
+        token: accessToken,
+      });
+    } else {
+      // If the user does not exist, create a new user with social login info
+      user = new User({
+        username: name,  // You can modify this logic to set a default username if needed
+        email,
+        avatar,
+        socialLogin: { provider: "google", providerId: googleId },
+        isEmailVerified: true, // For social logins, we assume email is verified
+      });
+
+      // Generate new tokens
+      const accessToken = generateAccessToken(user._id);
+      const refreshToken = generateRefreshToken(user._id);
+
+      // Save the new user
+      user.accessToken = accessToken;
+      user.refreshToken = refreshToken;
+      await user.save();
+
+      // Respond with user info and tokens
+      return res.status(201).json({
+        success: true,
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        avatar: user.avatar,
+        token: accessToken,
+      });
+    }
+  } catch (error) {
+    console.error("Error during Google login:", error);
+    res.status(500).json({ message: "Server error during Google login" });
+  }
+});
+
+
+
 export {
   registerUser,
   loginUser,
@@ -356,4 +435,5 @@ export {
   refreshToken,
   verifyEmail,
   logoutUser,
+  googleLogin,
 };

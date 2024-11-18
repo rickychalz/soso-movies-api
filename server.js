@@ -24,6 +24,7 @@ app.get('/test', (req, res) => {
   res.json({ message: 'Server is working' });
 });
 
+app.use('/public', express.static('public'));
 //routes
 app.use("/api/users", userRouter);
 
