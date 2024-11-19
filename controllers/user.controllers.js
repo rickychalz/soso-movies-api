@@ -1,6 +1,5 @@
 import asyncHandler from "express-async-handler";
 import { User } from "../models/user.models.js";
-import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import bcrypt from "bcryptjs";
 import {
   generateAccessToken,
@@ -22,6 +21,8 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID); // Your Goo
 const registerUser = asyncHandler(async (req, res) => {
   const { username, email, password, avatar } = req.body;
 
+  let isNewUser = false;
+
   try {
     // Validation checks
     if (!username?.trim() || !email?.trim() || !password?.trim()) {
@@ -40,7 +41,7 @@ const registerUser = asyncHandler(async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    
+    isNewUser = true
 
     // Create user with verification token
     const user = await User.create({
@@ -48,7 +49,8 @@ const registerUser = asyncHandler(async (req, res) => {
       email,
       password: hashedPassword,
       avatar,
-      isEmailVerified: false
+      isEmailVerified: false,
+      isNewUser
     });
 
     if (user) {
@@ -87,6 +89,8 @@ const registerUser = asyncHandler(async (req, res) => {
       await transporter.sendMail(mailOptions);
       console.log('Verification email sent successfully');
 
+      isNewUser = true
+
       res.status(201).json({
         success: true,
         id: user._id,
@@ -94,7 +98,8 @@ const registerUser = asyncHandler(async (req, res) => {
         email: user.email,
         avatar: user.avatar,
         accessToken,
-        message: "Registration successful. Please check your email to verify your account."
+        message: "Registration successful. Please check your email to verify your account.",
+        isNewUser
       });
     } else {
       res.status(400);
@@ -110,6 +115,8 @@ const registerUser = asyncHandler(async (req, res) => {
 const verifyEmail = asyncHandler(async (req, res) => {
   const token = req.query.token;
   console.log('Received verification token:', token);
+  
+  let isNewUser = false;
 
   if (!token) {
     res.status(400);
@@ -135,13 +142,34 @@ const verifyEmail = asyncHandler(async (req, res) => {
     user.isEmailVerified = true;
     user.verificationToken = undefined;
     await user.save();
+
     console.log('User verified successfully');
 
-    res.status(200).json({
-      success: true,
-      message: "Email successfully verified! You can now log in."
-    });
+    isNewUser = true;
 
+    // Create an object with the data you want to send
+    const userData = {
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      avatar: user.avatar,
+      token: user.accessToken,
+      favoriteGenres:user.favoriteGenres,
+      message: "Email verified successfully!",
+      isNewUser,
+    };
+
+    console.log(userData);
+
+    // Serialize the data (convert object to a string)
+    const serializedData = JSON.stringify(userData);
+
+    // Encode the data for safe URL transmission
+    const encodedData = encodeURIComponent(serializedData);
+
+    // Send the encoded data through a URL query parameter
+    res.redirect(302, `http://localhost:3000/email-verification?data=${encodedData}`);
+    
   } catch (error) {
     console.error('Verification error:', error);
     res.status(400);
@@ -152,6 +180,7 @@ const verifyEmail = asyncHandler(async (req, res) => {
 //login user
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
+  let isNewUser = false;
 
   try {
     // Validate input
@@ -186,13 +215,17 @@ const loginUser = asyncHandler(async (req, res) => {
     user.refreshToken = refreshToken;
     await user.save();
 
+    isNewUser = false;
+
     return res.status(200).json({
       success: true,
       _id: user._id,
       username: user.username,
       email: user.email,
       avatar: user.avatar,
+      favoriteGenres:user.favoriteGenres,
       token,
+      isNewUser
     });
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -291,10 +324,9 @@ const updateUserProfile = asyncHandler(async (req, res) => {
 //delete user
 const deleteUser = asyncHandler(async (req, res) => {
   try {
-    const user = User.findById(req.user._id);
-
+    const user = await User.findById(req.user._id);
     if (user) {
-      await user.remove();
+      await User.deleteOne({ _id: user._id });
       res.status(200).json({ message: "User deleted successfully!" });
     } else {
       res.status(404);
@@ -359,12 +391,14 @@ const refreshToken = asyncHandler(async (req, res) => {
   }
 });
 
+//google signin
 const googleLogin = asyncHandler(async (req, res) => {
   const { email, name, avatar, googleId } = req.body;  // Assume these are passed from the frontend
 
   try {
     // Check if the user already exists in the database
     let user = await User.findOne({ email });
+    let isNewUser = false;
 
     if (user) {
       // If user exists, update their Google login info (e.g., avatar, social login info)
@@ -374,6 +408,8 @@ const googleLogin = asyncHandler(async (req, res) => {
       // Generate new tokens
       const accessToken = generateAccessToken(user._id);
       const refreshToken = generateRefreshToken(user._id);
+
+      isNewUser = false;
 
       // Save the updated user
       user.accessToken = accessToken;
@@ -387,7 +423,9 @@ const googleLogin = asyncHandler(async (req, res) => {
         username: user.username,
         email: user.email,
         avatar: user.avatar,
+        favoriteGenres:user.favoriteGenres,
         token: accessToken,
+        isNewUser
       });
     } else {
       // If the user does not exist, create a new user with social login info
@@ -398,7 +436,7 @@ const googleLogin = asyncHandler(async (req, res) => {
         socialLogin: { provider: "google", providerId: googleId },
         isEmailVerified: true, // For social logins, we assume email is verified
       });
-
+      isNewUser = true;
       // Generate new tokens
       const accessToken = generateAccessToken(user._id);
       const refreshToken = generateRefreshToken(user._id);
@@ -415,7 +453,9 @@ const googleLogin = asyncHandler(async (req, res) => {
         username: user.username,
         email: user.email,
         avatar: user.avatar,
+        favoriteGenres:user.favoriteGenres,
         token: accessToken,
+        isNewUser
       });
     }
   } catch (error) {
@@ -424,7 +464,79 @@ const googleLogin = asyncHandler(async (req, res) => {
   }
 });
 
+//add to favorites
+const addFavoriteGenres = asyncHandler(async (req, res) => {
+  const { genres } = req.body; // Array of { id, name } objects
 
+  if (!genres || genres.length === 0) {
+    return res.status(400).json({ message: "Please provide genres to add." });
+  }
+
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return res.status(404).json({ message: "User not found." });
+  }
+
+  // Prevent duplicate genres by checking both id and name
+  const uniqueGenres = genres.filter(newGenre => 
+    !user.favoriteGenres.some(existingGenre => 
+      existingGenre.id === newGenre.id
+    )
+  );
+
+  user.favoriteGenres = [...user.favoriteGenres, ...uniqueGenres];
+  await user.save();
+
+  return res.status(200).json({ 
+    message: "Favorite genres updated successfully.", 
+    favoriteGenres: user.favoriteGenres 
+  });
+});
+
+//remove favorite genre
+const deleteFavoriteGenre = asyncHandler(async (req, res) => {
+  const { genreId } = req.body;
+
+  if (!genreId) {
+    return res.status(400).json({ message: "Genre ID is required" });
+  }
+
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  // Remove the genre with the specified ID
+  user.favoriteGenres = user.favoriteGenres.filter(genre => genre.id !== genreId);
+
+  await user.save();
+
+  return res.status(200).json({ 
+    message: "Genre deleted successfully", 
+    favoriteGenres: user.favoriteGenres 
+  });
+});
+
+//get favorite genres
+const getFavoriteGenres = asyncHandler(async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('favoriteGenres');
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    return res.status(200).json({
+      favoriteGenres: user.favoriteGenres
+    });
+  } catch (error) {
+    console.error('Error fetching favorite genres:', error);
+    return res.status(500).json({ 
+      message: "Server error", 
+      error: error.message 
+    });
+  }
+});
 
 export {
   registerUser,
@@ -436,4 +548,8 @@ export {
   verifyEmail,
   logoutUser,
   googleLogin,
+  addFavoriteGenres,
+  getFavoriteGenres,
+  deleteFavoriteGenre,
+  
 };

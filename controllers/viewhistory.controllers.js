@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 import {ViewHistory} from "../models/viewHistory.model.js"
 
+// update view history
 const updateViewHistory = asyncHandler(async (req, res) => {
   const { id, title, type } = req.body;
   const userId = req.user._id;

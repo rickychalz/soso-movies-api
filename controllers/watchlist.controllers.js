@@ -1,7 +1,7 @@
 import asyncHandler from "express-async-handler";
 import { Watchlist } from "../models/watchlist.model.js";
 
-
+//add to watchlist
 const addToWatchlist = asyncHandler(async (req, res) => {
   const { mediaId, mediaTitle, posterPath, mediaType } = req.body;
   const userId = req.user._id;
@@ -132,6 +132,7 @@ const checkWatchlist = asyncHandler(async (req, res) => {
     }
   })
 
+  //Get watchlist
   const getWatchlistCount = asyncHandler(async (req, res) => {
     const userId = req.user._id;
     

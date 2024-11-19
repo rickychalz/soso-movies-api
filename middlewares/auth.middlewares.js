@@ -81,8 +81,6 @@ const verifyToken = asyncHandler(async (req, res, next) => {
   }
 });
 
-
-
 //protection middleware
 const protectRoute = asyncHandler(async (req, res, next) => {
   let token;

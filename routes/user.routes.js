@@ -8,6 +8,10 @@ import {
   logoutUser,
   verifyEmail,
   googleLogin,
+  addFavoriteGenres,
+  deleteFavoriteGenre,
+  getFavoriteGenres,
+
 } from "../controllers/user.controllers.js";
 import {
   addToWatchlist,
@@ -33,6 +37,8 @@ router.post("/login", loginUser);
 router.post('/google-login', googleLogin);
 router.get("/verify-email", verifyEmail);
 
+
+
 //Private Routes
 router.use(verifyToken);
 router.put(
@@ -42,6 +48,7 @@ router.put(
   processImage,
   updateUserProfile
 );
+
 router.delete("/delete-user", protectRoute, deleteUser);
 router.put("/change-password", protectRoute, changePassword);
 router.post("/logout", protectRoute, logoutUser);
@@ -56,5 +63,9 @@ router.delete(
 router.post("/update-views", protectRoute, updateViewHistory);
 router.get("/view-history", protectRoute, getViewHistory);
 router.get("/today-stats", protectRoute, getTodayStats);
+router.post("/add-favorite-genres", protectRoute, addFavoriteGenres);
+router.get('/get-favorite-genres', protectRoute, getFavoriteGenres);
+router.delete('/delete-favorite-genre', protectRoute, deleteFavoriteGenre);
+
 
 export default router;

@@ -29,13 +29,15 @@ const userSchema = new Schema(
     },
     favoriteGenres: [
       {
-        type: String,
-      },
-    ],
-    likedMovies: [
-      {
-        type: String,
-      },
+        id: {
+          type: Number,
+          required: true
+        },
+        name: {
+          type: String,
+          required: true
+        }
+      }
     ],
     isEmailVerified: {
       type: Boolean,
